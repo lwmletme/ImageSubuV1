@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Auto Noise Images",
+  "version": "0.1.0",
+  "description": "Automatically overlays noise on images for pages you visit.",
+  "action": {
+    "default_title": "Auto Noise Images",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["scripts/content.js"],
+      "css": ["styles/content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": []
+}
