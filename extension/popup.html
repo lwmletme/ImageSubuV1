@@ -4,21 +4,66 @@
     <meta charset="UTF-8" />
     <title>Auto Noise Images</title>
     <style>
+      :root {
+        --ani-ivory: #f7f2e7;
+        --ani-black: #1a1a1a;
+        --ani-ivory-soft: #fbf7ef;
+      }
+
       body {
         margin: 0;
-        padding: 16px;
+        padding: 20px;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         font-size: 14px;
-        color: #222;
-        min-width: 160px;
-        min-height: 80px;
+        color: var(--ani-black);
+        min-width: 220px;
         display: flex;
-        align-items: center;
-        justify-content: center;
+        flex-direction: column;
+        gap: 16px;
+        background: linear-gradient(135deg, var(--ani-ivory), var(--ani-ivory-soft));
+      }
+
+      h1 {
+        font-size: 16px;
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+      }
+
+      p {
+        margin: 0;
+        line-height: 1.5;
+      }
+
+      .button-group {
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        flex: 1;
+        padding: 10px 12px;
+        border: none;
+        border-radius: 8px;
+        background: var(--ani-black);
+        color: var(--ani-ivory);
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button:active {
+        transform: scale(0.97);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
       }
     </style>
   </head>
   <body>
-    <div>안녕하세요</div>
+    <h1>안녕하세요</h1>
+    <p>이미지 노이즈 자동 적용 확장입니다.</p>
+    <div class="button-group">
+      <button type="button">이미지 노이즈 추가</button>
+      <button type="button">저장</button>
+    </div>
   </body>
 </html>
