@@ -84,13 +84,12 @@
         cursor: pointer;
       }
 
-      .button-group {
+      .button-row {
         display: flex;
         gap: 8px;
       }
 
       button {
-        flex: 1;
         padding: 10px 12px;
         border: none;
         border-radius: 8px;
@@ -99,6 +98,10 @@
         font-weight: 600;
         cursor: pointer;
         transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button.full-width {
+        width: 100%;
       }
 
       button:active {
@@ -111,6 +114,14 @@
         color: var(--ani-black);
         opacity: 0.8;
         min-height: 16px;
+      }
+
+      .status-message.error {
+        color: #a3302b;
+      }
+
+      .status-message.success {
+        color: #1a672e;
       }
     </style>
   </head>
@@ -137,10 +148,12 @@
           value="20"
         />
       </label>
-      <div class="button-group">
-        <button type="submit">이미지 노이즈 생성</button>
-        <button type="button" id="savePlaceholder">저장</button>
+      <div class="button-row">
+        <button type="button" id="startSelection">이미지 선택</button>
+        <button type="button" id="clearSelection">선택 해제</button>
       </div>
+      <button type="submit" class="full-width">선택 이미지에 노이즈 적용</button>
+      <button type="button" id="downloadNoisy" class="full-width">노이즈 이미지 저장</button>
       <div class="status-message" id="statusMessage"></div>
     </form>
     <script>
@@ -151,7 +164,9 @@
         const intensityInput = document.getElementById('intensity');
         const intensityLabel = document.getElementById('intensityLabel');
         const statusMessage = document.getElementById('statusMessage');
-        const savePlaceholderButton = document.getElementById('savePlaceholder');
+        const startSelectionButton = document.getElementById('startSelection');
+        const clearSelectionButton = document.getElementById('clearSelection');
+        const downloadButton = document.getElementById('downloadNoisy');
 
         const storageAvailable =
           typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
@@ -168,8 +183,14 @@
           intensityLabel.textContent = value.toFixed(1);
         };
 
-        const setStatus = (message) => {
+        const setStatus = (message, tone = 'neutral') => {
           statusMessage.textContent = message;
+          statusMessage.classList.remove('error', 'success');
+          if (tone === 'error') {
+            statusMessage.classList.add('error');
+          } else if (tone === 'success') {
+            statusMessage.classList.add('success');
+          }
         };
 
         const applyFormValues = (settings) => {
@@ -178,6 +199,31 @@
           intensityInput.value = intensityValue;
           updateIntensityLabel(intensityValue);
         };
+
+        const sendMessageToActiveTab = (payload) =>
+          new Promise((resolve, reject) => {
+            if (typeof chrome === 'undefined' || !chrome.tabs) {
+              reject(new Error('Chrome API를 사용할 수 없습니다.'));
+              return;
+            }
+
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+              const [tab] = tabs;
+              if (!tab || typeof tab.id !== 'number') {
+                reject(new Error('활성 탭을 찾을 수 없습니다.'));
+                return;
+              }
+
+              chrome.tabs.sendMessage(tab.id, payload, (response) => {
+                const lastError = chrome.runtime.lastError;
+                if (lastError) {
+                  reject(new Error(lastError.message));
+                  return;
+                }
+                resolve(response);
+              });
+            });
+          });
 
         const loadSettings = () => {
           if (!storageAvailable) {
@@ -194,6 +240,20 @@
             };
             applyFormValues(settings);
           });
+        };
+
+        const refreshSelectionState = async () => {
+          try {
+            const response = await sendMessageToActiveTab({ type: 'ANI_GET_SELECTION_STATE' });
+            if (!response) {
+              return;
+            }
+            if (response.hasSelected) {
+              setStatus('이미지가 선택되었습니다. 노이즈를 적용해 보세요.');
+            }
+          } catch (error) {
+            // ignore; likely no content script on tab
+          }
         };
 
         intensityInput.addEventListener('input', (event) => {
@@ -214,16 +274,96 @@
             return;
           }
 
+          const afterSave = () => {
+            setStatus('노이즈 설정을 적용했습니다.', 'success');
+          };
+
+          const applyToTab = async () => {
+            try {
+              await sendMessageToActiveTab({ type: 'ANI_APPLY_NOISE', payload });
+              afterSave();
+            } catch (error) {
+              setStatus(error.message || '노이즈 적용 중 문제가 발생했습니다.', 'error');
+            }
+          };
+
+          if (!storageAvailable) {
+            applyToTab();
+            return;
+          }
+
           chrome.storage.local.set(payload, () => {
-            setStatus('노이즈 설정이 업데이트되었습니다.');
+            applyToTab();
           });
         });
 
-        savePlaceholderButton.addEventListener('click', () => {
-          setStatus('저장 기능은 추후에 지원될 예정입니다.');
+        startSelectionButton.addEventListener('click', async () => {
+          try {
+            await sendMessageToActiveTab({ type: 'ANI_START_SELECTION' });
+            setStatus('선택할 이미지를 페이지에서 클릭하세요.');
+          } catch (error) {
+            setStatus(error.message || '이미지 선택 준비 중 오류가 발생했습니다.', 'error');
+          }
+        });
+
+        clearSelectionButton.addEventListener('click', async () => {
+          try {
+            await sendMessageToActiveTab({ type: 'ANI_CLEAR_SELECTION' });
+            setStatus('이미지 선택이 해제되었습니다.');
+          } catch (error) {
+            setStatus(error.message || '선택 해제에 실패했습니다.', 'error');
+          }
+        });
+
+        downloadButton.addEventListener('click', async () => {
+          try {
+            const response = await sendMessageToActiveTab({
+              type: 'ANI_GENERATE_NOISY_IMAGE',
+              payload: {
+                noiseType: noiseTypeSelect.value,
+                intensity: clampIntensity(intensityInput.value),
+              },
+            });
+            if (!response || !response.ok) {
+              throw new Error(response?.error || '노이즈 이미지를 생성하지 못했습니다.');
+            }
+
+            const anchor = document.createElement('a');
+            anchor.href = response.dataUrl;
+            anchor.download = response.fileName || `noisy-image-${Date.now()}.png`;
+            anchor.click();
+            setStatus('노이즈 적용 이미지를 저장했습니다.', 'success');
+          } catch (error) {
+            setStatus(error.message || '이미지 저장 중 오류가 발생했습니다.', 'error');
+          }
         });
 
         loadSettings();
+        refreshSelectionState();
+
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+          chrome.runtime.onMessage.addListener((message) => {
+            if (!message || !message.type) {
+              return;
+            }
+
+            if (message.type === 'ANI_SELECTION_CHANGED') {
+              if (message.hasSelected) {
+                setStatus('이미지가 선택되었습니다. 노이즈를 적용해 보세요.');
+              } else {
+                setStatus('이미지 선택이 해제되었습니다.');
+              }
+            }
+
+            if (message.type === 'ANI_NOISE_APPLIED_FEEDBACK') {
+              if (message.ok) {
+                setStatus('노이즈가 적용되었습니다.', 'success');
+              } else {
+                setStatus(message.error || '노이즈 적용 중 문제가 발생했습니다.', 'error');
+              }
+            }
+          });
+        }
       })();
     </script>
   </body>

@@ -7,7 +7,7 @@
     "default_title": "Auto Noise Images",
     "default_popup": "popup.html"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "tabs"],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -16,5 +16,5 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": []
+  "host_permissions": ["<all_urls>"]
 }

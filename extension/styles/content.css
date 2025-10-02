@@ -19,3 +19,13 @@
   mix-blend-mode: multiply;
   opacity: 0.2;
 }
+
+body.ani-noise-select-mode img {
+  cursor: crosshair !important;
+}
+
+img.ani-noise-selected-image {
+  outline: 2px solid rgba(26, 26, 26, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

@@ -1,12 +1,12 @@
 (() => {
+  const chromeApi = typeof chrome === 'undefined' ? null : chrome;
+
   const NOISE_APPLIED_ATTR = 'data-ani-noise-applied';
   const NOISE_WRAPPER_CLASS = 'ani-noise-wrapper';
   const NOISE_OVERLAY_CLASS = 'ani-noise-overlay';
-  const DEFAULT_SETTINGS = Object.freeze({
-    noiseType: 'uniform',
-    intensity: 20,
-  });
-
+  const SELECTED_CLASS = 'ani-noise-selected-image';
+  const SELECTION_MODE_CLASS = 'ani-noise-select-mode';
+  const DEFAULT_SETTINGS = Object.freeze({ noiseType: 'uniform', intensity: 20 });
   const SUPPORTED_NOISE_TYPES = new Set(['uniform', 'gaussian']);
 
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -21,7 +21,7 @@
     return clamp(normalized, 0, 1);
   };
 
-  const createNoiseDataUrl = (type = DEFAULT_SETTINGS.noiseType, size = 128) => {
+  const createNoisePattern = (type = DEFAULT_SETTINGS.noiseType, size = 128) => {
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
@@ -49,16 +49,18 @@
   };
 
   let currentSettings = { ...DEFAULT_SETTINGS };
-  let noisePattern = createNoiseDataUrl(currentSettings.noiseType);
+  let noisePattern = createNoisePattern(currentSettings.noiseType);
+  let selectedImage = null;
+  let selectionModeEnabled = false;
 
   const ensureWrapper = (image) => {
-    if (image.closest(`.${NOISE_WRAPPER_CLASS}`)) {
-      return image.closest(`.${NOISE_WRAPPER_CLASS}`);
+    const existing = image.closest(`.${NOISE_WRAPPER_CLASS}`);
+    if (existing) {
+      return existing;
     }
 
     const wrapper = document.createElement('span');
     wrapper.className = NOISE_WRAPPER_CLASS;
-
     const parent = image.parentNode;
     if (!parent) {
       return null;
@@ -86,12 +88,20 @@
     return overlay;
   };
 
-  const applyNoise = (image) => {
-    if (!image || image.nodeType !== Node.ELEMENT_NODE) {
+  const removeOverlay = (image) => {
+    const wrapper = image.closest(`.${NOISE_WRAPPER_CLASS}`);
+    if (!wrapper) {
       return;
     }
+    const overlay = wrapper.querySelector(`.${NOISE_OVERLAY_CLASS}`);
+    if (overlay) {
+      overlay.remove();
+    }
+    image.removeAttribute(NOISE_APPLIED_ATTR);
+  };
 
-    if (image.getAttribute(NOISE_APPLIED_ATTR) === 'true') {
+  const applyNoise = (image) => {
+    if (!image || image.nodeType !== Node.ELEMENT_NODE) {
       return;
     }
 
@@ -100,7 +110,10 @@
       if (!wrapper) {
         return;
       }
-      if (wrapper.querySelector(`.${NOISE_OVERLAY_CLASS}`)) {
+
+      const existing = wrapper.querySelector(`.${NOISE_OVERLAY_CLASS}`);
+      if (existing) {
+        applyOverlaySettings(existing);
         image.setAttribute(NOISE_APPLIED_ATTR, 'true');
         return;
       }
@@ -117,14 +130,10 @@
     }
   };
 
-  const scanExistingImages = () => {
-    document.querySelectorAll('img').forEach(applyNoise);
-  };
-
   const refreshAllOverlays = () => {
-    document
-      .querySelectorAll(`.${NOISE_OVERLAY_CLASS}`)
-      .forEach((overlay) => applyOverlaySettings(overlay));
+    document.querySelectorAll(`.${NOISE_OVERLAY_CLASS}`).forEach((overlay) => {
+      applyOverlaySettings(overlay);
+    });
   };
 
   const normalizeSettings = (settings) => {
@@ -141,31 +150,125 @@
 
   const applySettings = (settings) => {
     currentSettings = normalizeSettings(settings);
-    noisePattern = createNoiseDataUrl(currentSettings.noiseType);
+    noisePattern = createNoisePattern(currentSettings.noiseType);
     refreshAllOverlays();
+    if (selectedImage) {
+      applyNoise(selectedImage);
+    }
   };
 
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
-      mutation.addedNodes.forEach((node) => {
-        if (node instanceof HTMLImageElement) {
-          applyNoise(node);
-          return;
-        }
-
-        if (node instanceof Element) {
-          node.querySelectorAll('img').forEach(applyNoise);
-        }
-      });
-    });
-  });
-
-  const listenForStorageChanges = () => {
-    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.onChanged) {
+  const notifySelectionChanged = () => {
+    if (!chromeApi?.runtime?.sendMessage) {
       return;
     }
 
-    chrome.storage.onChanged.addListener((changes, areaName) => {
+    try {
+      chromeApi.runtime.sendMessage({
+        type: 'ANI_SELECTION_CHANGED',
+        hasSelected: Boolean(selectedImage),
+      });
+    } catch (error) {
+      // ignore
+    }
+  };
+
+  const selectImage = (image) => {
+    if (selectedImage === image) {
+      return;
+    }
+
+    if (selectedImage) {
+      selectedImage.classList.remove(SELECTED_CLASS);
+      removeOverlay(selectedImage);
+    }
+
+    selectedImage = image;
+    selectedImage.classList.add(SELECTED_CLASS);
+    applyNoise(selectedImage);
+    notifySelectionChanged();
+  };
+
+  const clearSelection = () => {
+    if (!selectedImage) {
+      return;
+    }
+    selectedImage.classList.remove(SELECTED_CLASS);
+    removeOverlay(selectedImage);
+    selectedImage = null;
+    notifySelectionChanged();
+  };
+
+  const noiseDelta = (type, intensity) => {
+    const factor = clamp(intensity / 100, 0.005, 1) * 128;
+    if (type === 'gaussian') {
+      return (randomGaussianUnit() - 0.5) * 2 * factor;
+    }
+    return (Math.random() - 0.5) * 2 * factor;
+  };
+
+  const generateNoisyDataUrl = (image, settings) =>
+    new Promise((resolve, reject) => {
+      if (!image) {
+        reject(new Error('선택된 이미지가 없습니다.'));
+        return;
+      }
+
+      const width = image.naturalWidth;
+      const height = image.naturalHeight;
+
+      if (!width || !height) {
+        reject(new Error('이미지 크기를 불러올 수 없습니다.'));
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        reject(new Error('캔버스 컨텍스트 생성에 실패했습니다.'));
+        return;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      const finalize = () => {
+        try {
+          ctx.drawImage(image, 0, 0, width, height);
+          const imageData = ctx.getImageData(0, 0, width, height);
+          const { data } = imageData;
+          const { noiseType, intensity } = settings;
+
+          for (let i = 0; i < data.length; i += 4) {
+            const delta = noiseDelta(noiseType, intensity);
+            data[i] = clamp(data[i] + delta, 0, 255);
+            data[i + 1] = clamp(data[i + 1] + delta, 0, 255);
+            data[i + 2] = clamp(data[i + 2] + delta, 0, 255);
+          }
+
+          ctx.putImageData(imageData, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      if (image.complete && image.naturalWidth > 0) {
+        finalize();
+      } else {
+        const onLoad = () => {
+          image.removeEventListener('load', onLoad);
+          finalize();
+        };
+        image.addEventListener('load', onLoad);
+      }
+    });
+
+  const listenForStorageChanges = () => {
+    if (!chromeApi?.storage?.onChanged) {
+      return;
+    }
+
+    chromeApi.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local') {
         return;
       }
@@ -193,25 +296,123 @@
   };
 
   const loadInitialSettings = (onReady = () => {}) => {
-    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+    if (!chromeApi?.storage?.local) {
       applySettings(DEFAULT_SETTINGS);
       onReady();
       return;
     }
 
-    chrome.storage.local.get(DEFAULT_SETTINGS, (items) => {
+    chromeApi.storage.local.get(DEFAULT_SETTINGS, (items) => {
       applySettings(items);
       onReady();
     });
   };
 
+  const selectionClickHandler = (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLImageElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    disableSelectionMode();
+    selectImage(target);
+  };
+
+  const enableSelectionMode = () => {
+    if (selectionModeEnabled) {
+      return;
+    }
+    selectionModeEnabled = true;
+    document.body.classList.add(SELECTION_MODE_CLASS);
+    document.addEventListener('click', selectionClickHandler, true);
+  };
+
+  const disableSelectionMode = () => {
+    if (!selectionModeEnabled) {
+      return;
+    }
+    selectionModeEnabled = false;
+    document.body.classList.remove(SELECTION_MODE_CLASS);
+    document.removeEventListener('click', selectionClickHandler, true);
+  };
+
+  const handleApplyNoiseRequest = (settings, sendResponse) => {
+    if (!selectedImage) {
+      sendResponse({ ok: false, error: '먼저 이미지를 선택해 주세요.' });
+      return;
+    }
+
+    applySettings(settings);
+    sendResponse({ ok: true });
+
+    if (chromeApi?.runtime?.sendMessage) {
+      try {
+        chromeApi.runtime.sendMessage({ type: 'ANI_NOISE_APPLIED_FEEDBACK', ok: true });
+      } catch (error) {
+        // ignore
+      }
+    }
+  };
+
+  if (chromeApi?.runtime?.onMessage) {
+    chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (!message || !message.type) {
+        return;
+      }
+
+      switch (message.type) {
+        case 'ANI_START_SELECTION':
+          enableSelectionMode();
+          sendResponse({ ok: true });
+          break;
+        case 'ANI_CLEAR_SELECTION':
+          disableSelectionMode();
+          clearSelection();
+          sendResponse({ ok: true });
+          break;
+        case 'ANI_GET_SELECTION_STATE':
+          sendResponse({ hasSelected: Boolean(selectedImage) });
+          break;
+        case 'ANI_APPLY_NOISE':
+          handleApplyNoiseRequest(message.payload ?? {}, sendResponse);
+          break;
+        case 'ANI_GENERATE_NOISY_IMAGE': {
+          if (!selectedImage) {
+            sendResponse({ ok: false, error: '먼저 이미지를 선택해 주세요.' });
+            return true;
+          }
+
+          const settings = normalizeSettings(message.payload ?? currentSettings);
+
+          generateNoisyDataUrl(selectedImage, settings)
+            .then((dataUrl) => {
+              sendResponse({ ok: true, dataUrl, fileName: `noisy-image-${Date.now()}.png` });
+            })
+            .catch((error) => {
+              const isSecurityError = error && /tainted|cross-origin|security/i.test(error.message || '');
+              sendResponse({
+                ok: false,
+                error: isSecurityError
+                  ? '보안 제한 때문에 이미지를 저장할 수 없습니다.'
+                  : error.message || '이미지 저장에 실패했습니다.',
+              });
+            });
+
+          return true;
+        }
+        default:
+          break;
+      }
+
+      return true;
+    });
+  }
+
   const start = () => {
     loadInitialSettings(() => {
-      scanExistingImages();
-      observer.observe(document.documentElement || document.body, {
-        childList: true,
-        subtree: true,
-      });
       listenForStorageChanges();
     });
   };
