@@ -192,7 +192,7 @@
     });
   };
 
-  const loadInitialSettings = (onReady) => {
+  const loadInitialSettings = (onReady = () => {}) => {
     if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
       applySettings(DEFAULT_SETTINGS);
       onReady();

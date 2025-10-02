@@ -12,3 +12,4 @@ logs/changelog-20251002-1812.md — agents.md 커밋 메시지 지침 명확화 
 logs/changelog-20251002-1826.md — 팝업 테마 및 버튼 구성 변경 기록
 logs/changelog-20251002-1831.md — agents.md 역할 분담(에이전트 add/commit, 사용자 push) 기록
 logs/changelog-20251002-1837.md — 노이즈 설정 UI와 저장 연동 추가 기록
+logs/changelog-20251002-1838.md — 설정 로딩 콜백 기본값 추가 기록
